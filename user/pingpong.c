@@ -20,7 +20,7 @@ main(int argc, char *argv[]){
         close(p_1[1]);  // close write side of p_1
         read(p_1[0], buf, 1);   // receive one byte from parent
 
-        printf("%d: received ping\n", pid);   
+        printf("%d:received ping\n", pid);   
 
         close(p_2[0]);  // close read side of p_2
         write(p_2[1], buf, 1);
