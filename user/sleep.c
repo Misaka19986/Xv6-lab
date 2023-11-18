@@ -8,7 +8,7 @@ main(int argc, char *argv[]){
         exit(1);
     }
 
-    printf("argc:%d, argv:%s", &argc, &argv);
+    printf("argc:%d, argv:%s", argc, argv);
 
     int ticks = atoi(argv[1]);
     int ret = sleep(ticks);
