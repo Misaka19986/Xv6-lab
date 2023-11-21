@@ -5,6 +5,7 @@
 #include "param.h"
 #include "memlayout.h"
 #include "spinlock.h"
+#include "sysinfo.h"
 #include "proc.h"
 
 uint64
@@ -108,5 +109,27 @@ sys_trace(void)
   }
   
   p->tracecode |= tracecode;
+  return 0;
+}
+
+// collect system info
+uint64
+sys_sysinfo(void)
+{
+  struct proc *p = myproc();
+  uint64 addr;  // a pointer directs to struct sysinfo
+
+  if(argaddr(0, &addr) < 0){
+    return -1;
+  }
+
+  struct sysinfo s;
+  s.freemem = kfreemem();
+  s.nproc = not_unused_process();
+
+  if(copyout(p->pagetable, addr, (char *)&s, sizeof(s)) < 0){
+    return -1;
+  }
+
   return 0;
 }
