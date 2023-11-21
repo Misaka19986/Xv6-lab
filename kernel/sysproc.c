@@ -95,3 +95,18 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+// retrieve tracecode from argument
+uint64
+sys_trace(void)
+{
+  struct proc *p = myproc();
+  int tracecode;
+
+  if(argint(0, &tracecode) < 0){
+    return -1;
+  }
+  
+  p->tracecode |= tracecode;
+  return 0;
+}

@@ -131,6 +131,32 @@ static uint64 (*syscalls[])(void) = {
 [SYS_trace]   sys_trace,
 };
 
+static char *syscalls_names[] = {
+    "fork",
+    "exit",
+    "wait",
+    "pipe",
+    "read",
+    "kill",
+    "exec",
+    "fstat",
+    "chdir",
+    "dup",
+    "getpid",
+    "sbrk",
+    "sleep",
+    "uptime",
+    "open",
+    "write",
+    "mknod",
+    "unlink",
+    "link",
+    "mkdir",
+    "close",
+    "trace",
+    "sysinfo",
+};
+
 void
 syscall(void)
 {
@@ -140,6 +166,15 @@ syscall(void)
   num = p->trapframe->a7;
   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     p->trapframe->a0 = syscalls[num]();
+
+    // printf("p -> tracecode: %d\n", p->tracecode);
+    // printf("%d\n", (1 << num));
+
+    // tracecode and (1 << num) are one-bit, so use &
+    if(p->tracecode & (1 << num)){
+      printf("%d: syscall %s -> %d\n", p->pid, syscalls_names[num - 1], p->trapframe->a0);
+    }
+    
   } else {
     printf("%d %s: unknown sys call %d\n",
             p->pid, p->name, num);
