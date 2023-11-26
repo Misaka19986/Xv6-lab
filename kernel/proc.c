@@ -224,16 +224,20 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
   uvmfree(pagetable, sz);
 }
 
-void
-proc_freekpagetable(pagetable_t kpagetable)
-{
-  uvmunmap(kpagetable, UART0, 1, 0);
-  uvmunmap(kpagetable, VIRTIO0, 1, 0);
-  uvmunmap(kpagetable, CLINT, 0x10000 / PGSIZE, 0);
-  uvmunmap(kpagetable, PLIC, 0x400000 / PGSIZE, 0);
-  uvmunmap(kpagetable, KERNBASE, (PHYSTOP - KERNBASE) / PGSIZE, 0);
-  uvmunmap(kpagetable, TRAMPOLINE, 1, 0);
-  uvmfree(kpagetable, 0);
+void 
+proc_freekpagetable(pagetable_t kpagetable) {
+  for(int i = 0; i < 512; i++){
+    pte_t pte = kpagetable[i];
+    if((pte & PTE_V)){
+        kpagetable[i] = 0;    // 对于有效的PTE都清零
+        // 递归清除
+        if ((pte & (PTE_R|PTE_W|PTE_X)) == 0) {
+            uint64 child = PTE2PA(pte);
+            proc_freekpagetable((pagetable_t)child);
+        }
+    }
+  }
+  kfree((void*)kpagetable);
 }
 
 // a user program that calls exec("/init")
@@ -262,6 +266,8 @@ userinit(void)
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
+  u2kvmcopy(p->pagetable, p->kpagetable, 0, p->sz);
+
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -274,7 +280,7 @@ userinit(void)
   release(&p->lock);
 }
 
-// Grow or shrink user memory by n bytes.
+//  / PGSIZE or shrink user memory by n bytes.
 // Return 0 on success, -1 on failure.
 int
 growproc(int n)
@@ -284,11 +290,24 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+    if(sz + n > PLIC){
+      return -1;
+    }
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+
+    // p->sz = oldsz
+    if(u2kvmcopy(p->pagetable, p->kpagetable, p->sz, sz) < 0){
+      return -1;
+    }
+
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
+    if(PGROUNDUP(sz) < PGROUNDUP(p->sz)){ // did less memory
+      uvmunmap(p->kpagetable, PGROUNDUP(sz), (PGROUNDUP(p->sz) - PGROUNDUP(sz)) / PGSIZE, 0);
+      // clear pte but not free
+    }
   }
   p->sz = sz;
   return 0;
@@ -315,6 +334,12 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+
+  if(u2kvmcopy(np->pagetable, np->kpagetable, 0, np->sz) < 0){
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
 
   np->parent = p;
 
