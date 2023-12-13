@@ -99,10 +99,32 @@ sys_uptime(void)
 
 uint64
 sys_sigalarm(void){
+  struct proc *p = myproc();
+  int period;
+  if(argint(0, &period) < 0){
+    return -1;
+  }
+
+  uint64 fn;
+  if(argaddr(1, &fn) < 0){
+    return -1;
+  }
+
+  p->alarm_period = period;
+  p->alarm_handler = fn;
+  p->ticks_since_last_alarm = 0;
+  p->is_handling = 0;
+
   return 0;
 }
 
 uint64
 sys_sigreturn(void){
+  struct proc *p = myproc();
+  if(p->is_handling){
+    p->is_handling = 0;
+    memmove(p->trapframe, p->alarmframe, 512);
+    p->ticks_since_last_alarm = 0;
+  }
   return 0;
 }
