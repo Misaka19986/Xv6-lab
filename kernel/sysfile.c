@@ -484,3 +484,14 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint 
+sys_symlink(void){
+  char target[MAXPATH], path[MAXPATH];
+
+  if(argstr(0, target, MAXPATH) < 0 || argstr(0, path, MAXPATH) < 0){
+    return -1;
+  }
+  
+  
+}
