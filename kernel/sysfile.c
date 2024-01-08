@@ -16,6 +16,8 @@
 #include "file.h"
 #include "fcntl.h"
 
+#define MAXSYMLINKDEPTH 10
+
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
 static int
@@ -283,6 +285,35 @@ create(char *path, short type, short major, short minor)
   return ip;
 }
 
+struct inode *
+get_inode_by_name(char *path, int depth, int omode)
+{
+  if(depth > MAXSYMLINKDEPTH){
+    printf("open: symlink too deep\n");
+    return 0;
+  }
+
+  struct inode *ip;
+  if((ip = namei(path)) == 0){
+    return 0;
+  }
+
+  ilock(ip);
+  if(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)){
+    char name[MAXPATH];
+    if(readi(ip, 0, (uint64)name, ip->size - MAXPATH, MAXPATH) == 0){
+      iunlock(ip);
+      return 0;
+    }
+    iunlock(ip);
+
+    return get_inode_by_name(name, depth + 1, omode);
+  }
+  iunlock(ip);
+
+  return ip;
+}
+
 uint64
 sys_open(void)
 {
@@ -304,12 +335,18 @@ sys_open(void)
       return -1;
     }
   } else {
-    if((ip = namei(path)) == 0){
+    // if((ip = namei(path)) == 0){
+    //   end_op();
+    //   return -1;
+    // }
+
+    if((ip = get_inode_by_name(path, 0, omode)) == 0){
       end_op();
       return -1;
     }
+
     ilock(ip);
-    if(ip->type == T_DIR && omode != O_RDONLY){
+    if(ip->type == T_DIR && omode != O_RDONLY){ // not allow to write directory
       iunlockput(ip);
       end_op();
       return -1;
@@ -488,10 +525,45 @@ sys_pipe(void)
 uint 
 sys_symlink(void){
   char target[MAXPATH], path[MAXPATH];
+  char name[DIRSIZ];
+  struct inode *ip, *dp;
 
-  if(argstr(0, target, MAXPATH) < 0 || argstr(0, path, MAXPATH) < 0){
+  if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0){
     return -1;
   }
   
+  begin_op();
   
+  if((ip = namei(target)) != 0 && ip->type != T_DIR){ // is target has an inode
+    ilock(ip);
+    ip->nlink++;
+    iupdate(ip);
+    iunlockput(ip);
+  } // if not, just write to path and don't care it
+
+  if((dp = namei(path)) == 0){  // is path has an inode?
+    if(nameiparent(path, name) == 0){ // no parent 
+      printf("symlink: no parent\n");
+      end_op();
+      return -1;
+    }
+
+    if((dp = create(path, T_SYMLINK, 0, 0)) != 0){  // create an inode
+      iunlock(dp);
+    }else{
+      printf("symlink: create failed\n");
+      return -1;
+    }
+  }
+
+  // now path has an inode
+  ilock(dp);
+
+  writei(dp, 0, (uint64)target, dp->size, MAXPATH);
+
+  dp->type = T_SYMLINK;
+  iunlockput(dp);
+
+  end_op();
+  return 0;
 }
