@@ -484,3 +484,121 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64
+sys_mmap()
+{
+  uint64 addr;
+  int length, prot, flags, fd, offset;
+  struct file *f;
+
+  if(argaddr(0, &addr) < 0 || argint(1, &length) < 0 || argint(2, &prot) < 0 ||
+    argint(3, &flags) < 0 || argfd(4, &fd, &f) < 0 || argint(5, &offset) < 0){
+
+    return -1;
+  }
+
+  if(!f->writable && (flags & MAP_SHARED) && (prot & PROT_WRITE)){
+    return -1;
+  }
+
+  // no need to really map file to memory, just handle it when page-fault
+  struct proc *p = myproc();
+  for(int i = 0;i < MAXVMA;i++){
+    struct VMA *v = &p->vma[i];
+    if(!v->used){ // not used
+      length = PGROUNDUP(length);
+      v->addr = p->sz;  // use p->sz to p->sz + length
+      p->sz += length;  // lazy-alloc for mapping
+      v->file = filedup(f);
+      v->flags = flags;
+      v->length = length;
+      v->offset = offset;
+      v->prot = prot;
+      v->used = 1;
+      return v->addr;
+    }
+  }
+
+  return -1;
+}
+
+// similar to filewrite but with offset
+int
+write_back_to_disk(struct file *file, uint64 addr, int n, int offset)
+{
+  int r = 0;
+  if(file->writable == 0){
+    return -1;
+  }
+
+  int max = ((MAXOPBLOCKS-1-1-2) / 2) * BSIZE;  // one block a time
+  int i = 0;
+  while(i < n){
+    int n1 = n - i;
+    if(n1 > max) n1 = max;
+
+    begin_op();
+    ilock(file->ip);
+    if((r = writei(file->ip, 1, addr + i, offset, n1)) > 0){
+      offset += r;
+    }
+    iunlock(file->ip);
+    end_op();
+
+    if(r != n1){
+      break;
+    }
+    i += r;
+  }
+
+  return 0;
+}
+
+uint64
+sys_munmap()
+{
+  uint64 addr;
+  int length;
+  
+  if(argaddr(0, &addr) < 0 || argint(1, &length) < 0){
+    return -1;
+  }
+
+  struct proc *p = myproc();
+
+  int close = 0;
+  for(int i = 0;i < MAXVMA;i++){
+    struct VMA *v = &p->vma[i];
+    if(v->used && addr >= v->addr && addr < (v->addr + v->length)){ // find the right vma
+      int old_offset = v->offset;
+      if(addr == v->addr){
+        if(length >= v->length){  // close whole file
+          length = v->length;
+          v->used = 0;
+          close = 1;
+        }else{  // reduce vma's addr and increase offset
+          v->addr += length;  // heap grows up
+          v->offset = length;
+        }
+      }
+
+      length = PGROUNDUP(length);
+      v->length -= length;  // as a section is continuous, so length must fits PGSIZE
+      p->sz -= length;  // so does proc's memory
+      uint64 npages = length / PGSIZE;
+
+      if(v->flags & MAP_SHARED){  // write file back to disk
+        write_back_to_disk(v->file, addr, length, old_offset);
+      }
+
+      uvmunmap(p->pagetable, PGROUNDDOWN(addr), npages, 0);
+      if(close) fileclose(v->file);
+
+      return 0;
+    }
+
+    
+  }
+  return -1;
+}

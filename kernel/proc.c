@@ -274,12 +274,23 @@ fork(void)
     return -1;
   }
 
+  for(int i = 0;i < MAXVMA;i++){  // copy vma
+    struct VMA *v = &p->vma[i];
+    struct VMA *nv = &np->vma[i];
+
+    if(v->used){
+      memmove(nv, v, sizeof(struct VMA));
+      filedup(v->file);
+    }
+  }
+
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
     release(&np->lock);
     return -1;
   }
+
   np->sz = p->sz;
 
   np->parent = p;
@@ -350,6 +361,14 @@ exit(int status)
       struct file *f = p->ofile[fd];
       fileclose(f);
       p->ofile[fd] = 0;
+    }
+  }
+
+  for(int i = 0;i < MAXVMA;i++){
+    struct VMA *v = &p->vma[i];
+    if(v->used){
+      uvmunmap(p->pagetable, v->addr, v->length / PGSIZE, 0);
+      memset(v, 0, sizeof(struct VMA));
     }
   }
 

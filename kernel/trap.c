@@ -6,6 +6,17 @@
 #include "proc.h"
 #include "defs.h"
 
+struct file {
+  enum { FD_NONE, FD_PIPE, FD_INODE, FD_DEVICE } type;
+  int ref; // reference count
+  char readable;
+  char writable;
+  struct pipe *pipe; // FD_PIPE
+  struct inode *ip;  // FD_INODE and FD_DEVICE
+  uint off;          // FD_INODE
+  short major;       // FD_DEVICE
+};
+
 struct spinlock tickslock;
 uint ticks;
 
@@ -67,7 +78,43 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if(r_scause() == 13 || r_scause() == 15){
+    uint64 va = r_stval();
+
+    // va not from heap
+    if(va >= p->sz || va < p->trapframe->sp){
+      goto bad;
+    }
+
+    int found = 0;
+    for(int i = 0;i < MAXVMA;i++){
+      struct VMA *v = &p->vma[i];
+      if(v->used && va >= v->addr && va < (v->addr + v->length)){ // find the right vma
+        uint64 mem = (uint64)kalloc();
+        va = PGROUNDDOWN(va);
+        memset((void *)mem, 0, PGSIZE);
+        if(mem == 0) goto bad;
+
+        if(mappages(p->pagetable, va, PGSIZE, mem, (v->prot << 1) | PTE_U) != 0){
+          kfree((void *)mem);
+          goto bad;
+        }
+
+        // file maybe starts from v->offset
+        uint64 offset = v->offset + va - v->addr;
+
+        // read 4KB from file
+        ilock(v->file->ip);
+        readi(v->file->ip, 1, va, offset, PGSIZE);
+        iunlock(v->file->ip);
+        found = 1;
+        break;
+      }
+    }
+
+    if(!found) goto bad;
   } else {
+    bad:
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;

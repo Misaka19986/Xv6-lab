@@ -7,4 +7,3 @@ struct sleeplock {
   char *name;        // Name of lock.
   int pid;           // Process holding lock
 };
-
